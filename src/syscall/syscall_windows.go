@@ -292,8 +292,8 @@ func NewCallbackCDecl(fn any) uintptr {
 //sys	CreateSymbolicLink(symlinkfilename *uint16, targetfilename *uint16, flags uint32) (err error) [failretval&0xff==0] = CreateSymbolicLinkW
 //sys	CreateHardLink(filename *uint16, existingfilename *uint16, reserved uintptr) (err error) [failretval&0xff==0] = CreateHardLinkW
 //sys	initializeProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, attrcount uint32, flags uint32, size *uintptr) (err error) = InitializeProcThreadAttributeList
-//sys	deleteProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) = DeleteProcThreadAttributeList
-//sys	updateProcThreadAttribute(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) = UpdateProcThreadAttribute
+//sys	deleteProcThreadAttributeList_orig(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) = DeleteProcThreadAttributeList
+//sys	updateProcThreadAttribute_orig(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) = UpdateProcThreadAttribute
 
 // syscall interface implementation for other packages
 
@@ -1289,10 +1289,20 @@ func PostQueuedCompletionStatus(cphandle Handle, qty uint32, key uint32, overlap
 	return postQueuedCompletionStatus(cphandle, qty, uintptr(key), overlapped)
 }
 
+
+//BACKPORT(NT_51): We cant really reimplement the functions, 
+// so we nop them for the cases where it does not matter.
+func load_initializeProcThreadAttributeList() error {
+	return procInitializeProcThreadAttributeList.Find()
+}
+
 // newProcThreadAttributeList allocates new PROC_THREAD_ATTRIBUTE_LIST, with
 // the requested maximum number of attributes, which must be cleaned up by
 // deleteProcThreadAttributeList.
 func newProcThreadAttributeList(maxAttrCount uint32) (*_PROC_THREAD_ATTRIBUTE_LIST, error) {
+	if load_initializeProcThreadAttributeList() != nil {
+		return nil, nil //BACKPORT(NT_51): NOP
+	}
 	var size uintptr
 	err := initializeProcThreadAttributeList(nil, maxAttrCount, 0, &size)
 	if err != ERROR_INSUFFICIENT_BUFFER {
@@ -1309,6 +1319,31 @@ func newProcThreadAttributeList(maxAttrCount uint32) (*_PROC_THREAD_ATTRIBUTE_LI
 	}
 	return al, nil
 }
+
+func load_deleteProcThreadAttributeList() error {
+	return procDeleteProcThreadAttributeList.Find()
+}
+
+func deleteProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) {
+	if load_deleteProcThreadAttributeList() != nil {
+		return //BACKPORT(NT_51): NOP
+	}
+	deleteProcThreadAttributeList_orig(attrlist)
+}
+
+func load_updateProcThreadAttribute() error {
+	return procUpdateProcThreadAttribute.Find()
+}
+
+func updateProcThreadAttribute(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) {
+	if load_updateProcThreadAttribute() != nil {
+		return nil //BACKPORT(NT_51): NOP
+	}
+	return updateProcThreadAttribute_orig(attrlist, flags, attr, value, size, prevvalue, returnedsize)
+}
+
+//BACKPORT(NT_51): fixme thing for testing the shellcode path
+//sys	GetProcessId(process Handle) (id uint32, err error)
 
 // RegEnumKeyEx enumerates the subkeys of an open registry key.
 // Each call retrieves information about one subkey. name is

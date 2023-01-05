@@ -49,16 +49,33 @@ func newFileStatFromGetFileInformationByHandle(path string, h syscall.Handle) (f
 	}
 
 	var ti windows.FILE_ATTRIBUTE_TAG_INFO
-	err = windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti)))
-	if err != nil {
-		if errno, ok := err.(syscall.Errno); ok && errno == windows.ERROR_INVALID_PARAMETER {
-			// It appears calling GetFileInformationByHandleEx with
-			// FILE_ATTRIBUTE_TAG_INFO fails on FAT file system with
-			// ERROR_INVALID_PARAMETER. Clear ti.ReparseTag in that
-			// instance to indicate no symlinks are possible.
+	if windows.LoadGetFileInformationByHandleEx() != nil {
+		//BACKPORT(NT_51): Fallback.
+		namep, err := syscall.UTF16PtrFromString(fixLongPath(path))
+        if err != nil {
 			ti.ReparseTag = 0
-		} else {
-			return nil, &PathError{Op: "GetFileInformationByHandleEx", Path: path, Err: err}
+        } else {
+			var fd syscall.Win32finddata
+			sh, err := syscall.FindFirstFile(namep, &fd)
+			if err != nil {
+				ti.ReparseTag = 0
+			} else {
+				syscall.FindClose(sh)
+				ti.ReparseTag = fd.Reserved0
+			}
+		}
+	} else {
+		err = windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti)))
+		if err != nil {
+			if errno, ok := err.(syscall.Errno); ok && errno == windows.ERROR_INVALID_PARAMETER {
+				// It appears calling GetFileInformationByHandleEx with
+				// FILE_ATTRIBUTE_TAG_INFO fails on FAT file system with
+				// ERROR_INVALID_PARAMETER. Clear ti.ReparseTag in that
+				// instance to indicate no symlinks are possible.
+				ti.ReparseTag = 0
+			} else {
+				return nil, &PathError{Op: "GetFileInformationByHandleEx", Path: path, Err: err}
+			}
 		}
 	}
 

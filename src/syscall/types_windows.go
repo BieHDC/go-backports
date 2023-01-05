@@ -1168,3 +1168,10 @@ const (
 )
 
 const UNIX_PATH_MAX = 108 // defined in afunix.h
+
+//BACKPORT(NT_51): Needed Types
+type NTStatus uint32
+type IO_STATUS_BLOCK struct {
+	Status      NTStatus
+	Information uintptr
+}

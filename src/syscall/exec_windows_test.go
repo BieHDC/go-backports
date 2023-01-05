@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"internal/testenv"
 	"syscall"
 	"testing"
 	"time"
@@ -48,6 +49,10 @@ func TestEscapeArg(t *testing.T) {
 }
 
 func TestChangingProcessParent(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	if os.Getenv("GO_WANT_HELPER_PROCESS") == "parent" {
 		// in parent process
 

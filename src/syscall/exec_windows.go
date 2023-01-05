@@ -329,6 +329,25 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 	// bit is not checked.
 	isLegacyWin7ConsoleHandle := func(handle Handle) bool { return isWin7 && handle&0x10000003 == 3 }
 
+	// Acquire the fork lock so that no other threads
+	// create new fds that are not yet close-on-exec
+	// before we fork.
+	//BACKPORT(NT_51): When running in backport mode 
+	// the calls to *ProcThreadAttribute* related 
+	// functions are NOP-ped, so just to make sure 
+	// to reduce the risk of issues, this is being 
+	// reintroduced.
+	// If it results in a performance regression we
+	// could make it optional.
+	// However the biggest issue is that some cases of 
+	// exec now fail, or rather hang forever, when it 
+	// expects the functionality to exists.
+	// Using the very oldest version of this code does 
+	// not fix the issue ether and reimplementing fork() 
+	// any other way is not viable.
+	ForkLock.Lock()
+	defer ForkLock.Unlock()
+
 	p, _ := GetCurrentProcess()
 	parentProcess := p
 	if sys.ParentProcess != 0 {
@@ -423,6 +442,28 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 	defer CloseHandle(Handle(pi.Thread))
 	runtime.KeepAlive(fd)
 	runtime.KeepAlive(sys)
+
+	if maj < 6 && sys.ParentProcess != 0 {
+		//BACKPORT(NT_51): Right now there is an issue when parent is set.
+		// When later someone waits at src/os/exec_windows.go:18 we will 
+		// hang forever. I am not exactly sure why that is since we just 
+		// ignore setting the parent. Can technically only be a bad handle. 
+		// This leaves us with a bad situation since we cant make a timeout 
+		// to detect this because a process could just take very long to 
+		// terminate.
+		// What we do instead is returning a invalid handle, which just makes the 
+		// wait fail, while the process still executes. This is really bad 
+		// overall, but runs most of the code we want it to.
+		// I am not yet sure how to properly reimplement this missing 
+		// functionality. The obvious thing to do would be to CreateRemoteThread 
+		// into the parent we want, run some shellcode to CreateProccess there 
+		// and that way inject the child process into it. But i am not 
+		// sure how inherting all the handles and the environment reacts to 
+		// this since i am not sure about the intended functionality at 
+		// this point. Hopefully some white hat hacker with more experience 
+		// comes across this issue and does some 200iq strat and makes this work.
+		return int(pi.ProcessId), uintptr(InvalidHandle), nil
+	}
 
 	return int(pi.ProcessId), uintptr(pi.Process), nil
 }

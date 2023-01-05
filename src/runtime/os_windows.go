@@ -23,7 +23,7 @@ const (
 //go:cgo_import_dynamic runtime._CreateIoCompletionPort CreateIoCompletionPort%4 "kernel32.dll"
 //go:cgo_import_dynamic runtime._CreateThread CreateThread%6 "kernel32.dll"
 //go:cgo_import_dynamic runtime._CreateWaitableTimerA CreateWaitableTimerA%3 "kernel32.dll"
-//go:cgo_import_dynamic runtime._CreateWaitableTimerExW CreateWaitableTimerExW%4 "kernel32.dll"
+////BACKPORT(NT_51): disabled and back to dynamic import runtime._CreateWaitableTimerExW CreateWaitableTimerExW%4 "kernel32.dll"
 //go:cgo_import_dynamic runtime._DuplicateHandle DuplicateHandle%7 "kernel32.dll"
 //go:cgo_import_dynamic runtime._ExitProcess ExitProcess%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._FreeEnvironmentStringsW FreeEnvironmentStringsW%1 "kernel32.dll"
@@ -31,7 +31,9 @@ const (
 //go:cgo_import_dynamic runtime._GetEnvironmentStringsW GetEnvironmentStringsW%0 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetProcAddress GetProcAddress%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetProcessAffinityMask GetProcessAffinityMask%3 "kernel32.dll"
-//go:cgo_import_dynamic runtime._GetQueuedCompletionStatusEx GetQueuedCompletionStatusEx%6 "kernel32.dll"
+////BACKPORT(NT_51): disabled and back to dynamic import runtime._GetQueuedCompletionStatusEx GetQueuedCompletionStatusEx%6 "kernel32.dll"
+//BACKPORT(NT_51): below readded for fallback
+//go:cgo_import_dynamic runtime._GetQueuedCompletionStatus GetQueuedCompletionStatus%5 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetStdHandle GetStdHandle%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetSystemDirectoryA GetSystemDirectoryA%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetSystemInfo GetSystemInfo%1 "kernel32.dll"
@@ -73,7 +75,7 @@ var (
 	_CreateIoCompletionPort,
 	_CreateThread,
 	_CreateWaitableTimerA,
-	_CreateWaitableTimerExW,
+	//BACKPORT(NT_51): disabled and back to dynamic loading _CreateWaitableTimerExW,
 	_DuplicateHandle,
 	_ExitProcess,
 	_FreeEnvironmentStringsW,
@@ -81,7 +83,8 @@ var (
 	_GetEnvironmentStringsW,
 	_GetProcAddress,
 	_GetProcessAffinityMask,
-	_GetQueuedCompletionStatusEx,
+	//BACKPORT(NT_51): disabled and back to dynamic loading _GetQueuedCompletionStatusEx,
+	_GetQueuedCompletionStatus, //BACKPORT(NT_51): readded for fallback
 	_GetStdHandle,
 	_GetSystemDirectoryA,
 	_GetSystemInfo,
@@ -120,6 +123,8 @@ var (
 	_AddVectoredContinueHandler,
 	_LoadLibraryExA,
 	_LoadLibraryExW,
+	_GetQueuedCompletionStatusEx, //BACKPORT(NT_51): added as dynamic
+	_CreateWaitableTimerExW, //BACKPORT(NT_51): added as dynamic
 	_ stdFunction
 
 	// Use RtlGenRandom to generate cryptographically random data.
@@ -254,6 +259,8 @@ func loadOptionalSyscalls() {
 	_AddVectoredContinueHandler = windowsFindfunc(k32, []byte("AddVectoredContinueHandler\000"))
 	_LoadLibraryExA = windowsFindfunc(k32, []byte("LoadLibraryExA\000"))
 	_LoadLibraryExW = windowsFindfunc(k32, []byte("LoadLibraryExW\000"))
+	_GetQueuedCompletionStatusEx = windowsFindfunc(k32, []byte("GetQueuedCompletionStatusEx\000")) //BACKPORT(NT_51): added to dynamic
+	_CreateWaitableTimerExW = windowsFindfunc(k32, []byte("CreateWaitableTimerExW\000")) //BACKPORT(NT_51): added to dynamic
 	useLoadLibraryEx = (_LoadLibraryExW != nil && _LoadLibraryExA != nil && _AddDllDirectory != nil)
 
 	var advapi32dll = []byte("advapi32.dll\000")
@@ -456,9 +463,13 @@ func createHighResTimer() uintptr {
 		_TIMER_QUERY_STATE  = 0x0001
 		_TIMER_MODIFY_STATE = 0x0002
 	)
-	return stdcall4(_CreateWaitableTimerExW, 0, 0,
-		_CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-		_SYNCHRONIZE|_TIMER_QUERY_STATE|_TIMER_MODIFY_STATE)
+	if _CreateWaitableTimerExW != nil {
+		return stdcall4(_CreateWaitableTimerExW, 0, 0,
+			_CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+			_SYNCHRONIZE|_TIMER_QUERY_STATE|_TIMER_MODIFY_STATE)
+	} else {
+		return uintptr(0) //BACKPORT(NT_51): we just dont have it and it cleanly falls back
+	}
 }
 
 const highResTimerSupported = GOARCH == "386" || GOARCH == "amd64"

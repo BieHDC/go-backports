@@ -16,7 +16,19 @@ import (
 	"unsafe"
 )
 
+func isWindowsXP(t *testing.T) bool {
+	v, err := syscall.GetVersion()
+	if err != nil {
+		t.Fatalf("GetVersion failed: %v", err)
+	}
+	major := byte(v)
+	return major < 6
+}
+
 func TestRunAtLowIntegrity(t *testing.T) {
+	if isWindowsXP(t) {
+		t.Skip("Windows XP does not support windows integrity levels")
+	}
 	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
 		wil, err := getProcessIntegrityLevel()
 		if err != nil {

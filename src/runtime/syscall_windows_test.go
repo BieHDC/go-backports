@@ -169,8 +169,9 @@ func nestedCall(t *testing.T, f func()) {
 	c := syscall.NewCallback(callback)
 	d := GetDLL(t, "kernel32.dll")
 	defer d.Release()
-	const LOCALE_NAME_USER_DEFAULT = 0
-	d.Proc("EnumTimeFormatsEx").Call(c, LOCALE_NAME_USER_DEFAULT, 0, uintptr(*(*unsafe.Pointer)(unsafe.Pointer(&f))))
+	//BACKPORT(NT_51): Replaced the function with another one that exists on Windows XP
+	// Here is a list: https://github.com/aahmad097/AlternativeShellcodeExec
+	d.Proc("EnumUILanguagesW").Call(c, 0, uintptr(*(*unsafe.Pointer)(unsafe.Pointer(&f))))
 }
 
 func TestCallback(t *testing.T) {

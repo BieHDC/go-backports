@@ -104,6 +104,10 @@ func testAddr2Line(t *testing.T, exepath, addr string) {
 
 // This is line 106. The test depends on that.
 func TestAddr2Line(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	testenv.MustHaveGoBuild(t)
 
 	tmpDir, err := os.MkdirTemp("", "TestAddr2Line")

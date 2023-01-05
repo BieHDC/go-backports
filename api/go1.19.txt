@@ -290,3 +290,11 @@ pkg sync/atomic, type Uint64 struct #50860
 pkg sync/atomic, type Uintptr struct #50860
 pkg time, method (Duration) Abs() Duration #51414
 pkg time, method (Time) ZoneBounds() (Time, Time) #50062
+pkg syscall (windows-386), type IO_STATUS_BLOCK struct #00000
+pkg syscall (windows-386), type IO_STATUS_BLOCK struct, Information uintptr #00000
+pkg syscall (windows-386), type IO_STATUS_BLOCK struct, Status NTStatus #00000
+pkg syscall (windows-386), type NTStatus uint32 #00000
+pkg syscall (windows-amd64), type IO_STATUS_BLOCK struct #00000
+pkg syscall (windows-amd64), type IO_STATUS_BLOCK struct, Information uintptr #00000
+pkg syscall (windows-amd64), type IO_STATUS_BLOCK struct, Status NTStatus #00000
+pkg syscall (windows-amd64), type NTStatus uint32 #00000

@@ -36,4 +36,17 @@ type FILE_ATTRIBUTE_TAG_INFO struct {
 	ReparseTag     uint32
 }
 
-//sys	GetFileInformationByHandleEx(handle syscall.Handle, class uint32, info *byte, bufsize uint32) (err error)
+
+//sys	GetFileInformationByHandleEx_orig(handle syscall.Handle, class uint32, info *byte, bufsize uint32) (err error) = kernel32.GetFileInformationByHandleEx
+
+func LoadGetFileInformationByHandleEx() error {
+	return procGetFileInformationByHandleEx.Find()
+}
+
+func GetFileInformationByHandleEx(handle syscall.Handle, class uint32, info *byte, bufsize uint32) (err error) {
+	if LoadGetFileInformationByHandleEx() != nil {
+		return ERROR_INVALID_PARAMETER
+	} else {
+		return GetFileInformationByHandleEx_orig(handle, class, info, bufsize)
+	}
+}
