@@ -1,0 +1,68 @@
+The TL;DR is that *most* functionality is available and your program will likely work.
+The biggest pain point is using Exec (or rather the fork part of it). It will likely break, avoid it.
+
+
+Notes:
+	src/cmd/link/internal/ld/pe.go
+		PeMinimumTargetMajorVersion = 6 -> changed to 5
+		PeMinimumTargetMinorVersion = 1 -> unchanged, but set to 0 if we suddenly target windows 2000 for some reason
+
+	missing for hello world:
+		CreateWaitableTimerExW -> Made optional since the existence of such a timer is also optional.
+		GetQueuedCompletionStatusEx -> Added old Fallback code back.
+		GetFileInformationByHandleEx -> Added Fallback.
+		CreateSymbolicLinkW -> Added check for its existence and fail gracefully.
+
+	others:
+		CancelIoEx has a fallback path again
+		SetFileInformationByHandle has been partially reimplemented through NtSetInformationFile, enough to make its only user happy
+		interfaces has its xp path back and a workaround for a weird issue with duplicated interface ids
+		severe amount of tests skipped (grep IsWindowsXP())
+		SymbolicLink using functions get a graceful error
+		stat-functions now fall back to syscall.FindFirstFile to get their ReparseTag when GetFileInformationByHandleEx is not available
+		StartProcess has its ForkLock back (the global variable still existed and was accidentally not deleted) and we have to work around 
+			not being able to set the process parent. see code src/syscall/exec_windows.go:446.
+		ProcThreadAttributeList-function are a nop when not available
+		for some reason fixedbugs/issue27836 triggers, but it seems to me more that winrar messes up extracting
+
+
+Todo:
+	Try to resolve the remaining hard issues, especially setting a custom parent process.
+		src/syscall/exec_windows.go:446
+		the hang from TestAddr2Line and TestChangingProcessParent seem to be 2 different hangs.
+		changeparent successfully fails when returning an invalid handle, but addr2line still hangs forever.
+	Run against Vista too?
+	Test bootstrapping on itself. Right now we bootstrap go-xp from go-linux, but go-xp should build go-xp itself again
+		to make sure the whole chain works.
+
+
+Files of interest:
+	src/internal/poll/fd_windows.go
+	src/internal/poll/sendfile_windows.go
+	src/net/interface_windows.go
+	src/os/file_windows.go -> Symlink()
+
+
+Commits of interest:
+	d50bb8dbb9d13858319db0914068126ed78e5144 --mostly test skips
+	4b74506da1ccf8c2f57f11991b432a6d5ac86e4f --done
+	bcc3447be56271a28484a8c8c9d71326355d13a5 --done
+	5c359736f8d67338b53c26aaef52139ae8cd0538 --still exists
+		ff7b245a31394b700a252fd547cf16ad0ad838b6 --^
+	31bfab4ac621e81100d7fc3bc8cf483c5d2d2fef --nxbit --maybe 32bit windows
+	e3cf0525b0ecfaeb9381108e8c7181cdc2abee57 -done
+	191118a8213d486389763afe31be0d2dd3f9ed6a --done
+	515e6a9b12dfe654c86cfd070ee5d6ac144fe116 --nope
+	d227a0811b76791fad04eeba35cf2794a719d610
+	50f4896b72d16b6538178c8ca851b20655075b7f --this thinger removed the fallback netpoll code
+
+
+Tests related notes:
+Windows xp doesnt support sha2
+	crypto/x509/sha2_windows_test.go -> check if xp
+	crypto/x509/verify_test.go -> added the skips back
+	internal/syscall/windows/exec_windows_test.go -> windows xp does not support integrity levels
+	net/net_windows_test.go -> windows xp netsh is incomplete and powershell doesnt exist
+	net/protoconn_test.go -> the required functionality seems to be not existent in xp 
+		```I do see that failure on my Windows XP - I was meant to report / investigate this but I did not have time yet. This is new functionality that has been implemented in CL 76393 and related. The failure is because WSASendMsg returns WSAEINVAL, from https://msdn.microsoft.com/en-us/library/windows/desktop/ms741692(v=vs.85).aspx "The socket has not been bound with bind, or the socket was not created with the overlapped flag.". But on the bottom of that page it also says "Minimum supported client | Windows 8.1, ...". So I doubt this is designed to work on Windows XP. I propose we create an issue for it, and skip broken part of the test.```
+	net/interfaces_windows_test.go -> tests for the old adapter stuff

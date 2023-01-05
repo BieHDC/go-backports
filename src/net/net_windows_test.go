@@ -20,6 +20,15 @@ import (
 	"time"
 )
 
+func isWindowsXP(t *testing.T) bool {
+	v, err := syscall.GetVersion()
+	if err != nil {
+		t.Fatalf("GetVersion failed: %v", err)
+	}
+	major := byte(v)
+	return major < 6
+}
+
 func toErrno(err error) (syscall.Errno, bool) {
 	operr, ok := err.(*OpError)
 	if !ok {
@@ -269,6 +278,10 @@ func netshInterfaceIPShowInterface(ipver string, ifaces map[string]bool) error {
 }
 
 func TestInterfacesWithNetsh(t *testing.T) {
+	if isWindowsXP(t) {
+		t.Skip("Windows XP netsh command does not provide required functionality")
+	}
+
 	checkNetsh(t)
 
 	toString := func(name string, isup bool) string {
@@ -438,6 +451,9 @@ func netshInterfaceIPv6ShowAddress(name string, netshOutput []byte) []string {
 }
 
 func TestInterfaceAddrsWithNetsh(t *testing.T) {
+	if isWindowsXP(t) {
+		t.Skip("Windows XP netsh command does not provide required functionality")
+	}
 	checkNetsh(t)
 
 	outIPV4, err := runCmd("netsh", "interface", "ipv4", "show", "address")
@@ -512,6 +528,9 @@ func checkGetmac(t *testing.T) {
 }
 
 func TestInterfaceHardwareAddrWithGetmac(t *testing.T) {
+	if isWindowsXP(t) {
+		t.Skip("Windows XP does not have powershell command")
+	}
 	checkGetmac(t)
 
 	ift, err := Interfaces()

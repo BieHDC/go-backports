@@ -307,3 +307,11 @@ pkg io/ioutil, func TempDir //deprecated #42026
 pkg io/ioutil, func TempFile //deprecated #42026
 pkg io/ioutil, func WriteFile //deprecated #42026
 pkg io/ioutil, var Discard //deprecated #42026
+pkg syscall (windows-386), type IO_STATUS_BLOCK struct #00000
+pkg syscall (windows-386), type IO_STATUS_BLOCK struct, Information uintptr #00000
+pkg syscall (windows-386), type IO_STATUS_BLOCK struct, Status NTStatus #00000
+pkg syscall (windows-386), type NTStatus uint32 #00000
+pkg syscall (windows-amd64), type IO_STATUS_BLOCK struct #00000
+pkg syscall (windows-amd64), type IO_STATUS_BLOCK struct, Information uintptr #00000
+pkg syscall (windows-amd64), type IO_STATUS_BLOCK struct, Status NTStatus #00000
+pkg syscall (windows-amd64), type NTStatus uint32 #00000

@@ -574,7 +574,7 @@ func DeleteFile(path *uint16) (err error) {
 	return
 }
 
-func deleteProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) {
+func deleteProcThreadAttributeList_orig(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) {
 	Syscall(procDeleteProcThreadAttributeList.Addr(), 1, uintptr(unsafe.Pointer(attrlist)), 0, 0)
 	return
 }
@@ -1117,7 +1117,7 @@ func UnmapViewOfFile(addr uintptr) (err error) {
 	return
 }
 
-func updateProcThreadAttribute(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) {
+func updateProcThreadAttribute_orig(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) {
 	r1, _, e1 := Syscall9(procUpdateProcThreadAttribute.Addr(), 7, uintptr(unsafe.Pointer(attrlist)), uintptr(flags), uintptr(attr), uintptr(value), uintptr(size), uintptr(prevvalue), uintptr(unsafe.Pointer(returnedsize)), 0, 0)
 	if r1 == 0 {
 		err = errnoErr(e1)

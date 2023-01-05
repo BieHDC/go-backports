@@ -1180,6 +1180,10 @@ func mklinkd(t *testing.T, link, target string) {
 }
 
 func TestWindowsReadlink(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Function does not exists on Windows XP")
+		return
+	}
 	tmpdir, err := os.MkdirTemp("", "TestWindowsReadlink")
 	if err != nil {
 		t.Fatal(err)

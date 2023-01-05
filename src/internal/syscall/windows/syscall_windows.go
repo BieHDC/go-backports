@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
+	"errors"
 )
 
 // UTF16PtrToString is like UTF16ToString, but takes *uint16
@@ -149,7 +150,7 @@ const (
 //sys	GetComputerNameEx(nameformat uint32, buf *uint16, n *uint32) (err error) = GetComputerNameExW
 //sys	MoveFileEx(from *uint16, to *uint16, flags uint32) (err error) = MoveFileExW
 //sys	GetModuleFileName(module syscall.Handle, fn *uint16, len uint32) (n uint32, err error) = kernel32.GetModuleFileNameW
-//sys	SetFileInformationByHandle(handle syscall.Handle, fileInformationClass uint32, buf uintptr, bufsize uint32) (err error) = kernel32.SetFileInformationByHandle
+//sys	SetFileInformationByHandle_orig(handle syscall.Handle, fileInformationClass uint32, buf uintptr, bufsize uint32) (err error) = kernel32.SetFileInformationByHandle
 //sys	VirtualQuery(address uintptr, buffer *MemoryBasicInformation, length uintptr) (err error) = kernel32.VirtualQuery
 
 const (
@@ -367,3 +368,178 @@ func LoadGetFinalPathNameByHandle() error {
 //sys	DestroyEnvironmentBlock(block *uint16) (err error) = userenv.DestroyEnvironmentBlock
 
 //sys	RtlGenRandom(buf []byte) (err error) = advapi32.SystemFunction036
+
+
+//BACKPORT(NT_51): Make SetFileInformationByHandle compatible for 
+// Windows XP and eventually needs expansion once it is more utilised.
+//sys	NtSetInformationFile(handle syscall.Handle, iosb *syscall.IO_STATUS_BLOCK, inBuffer *byte, inBufferLen uint32, class uint32) (ntstatus syscall.NTStatus) = ntdll.NtSetInformationFile
+
+func LoadSetFileInformationByHandle() error {
+	return procSetFileInformationByHandle.Find()
+}
+
+func SetFileInformationByHandle(handle syscall.Handle, fileInformationClass uint32, buf uintptr, bufsize uint32) (err error) {
+	if LoadSetFileInformationByHandle() != nil {
+		return CustomSetFileInformationByHandle(handle, fileInformationClass, buf, bufsize)
+	}
+	return SetFileInformationByHandle_orig(handle, fileInformationClass, buf, bufsize)
+}
+
+// FILE_INFO_BY_HANDLE_CLASS constants for SetFileInformationByHandle/GetFileInformationByHandleEx
+const (
+	CustomFileBasicInfo                  = 0
+	CustomFileStandardInfo               = 1
+	CustomFileNameInfo                   = 2
+	CustomFileRenameInfo                 = 3
+	CustomFileDispositionInfo            = 4
+	CustomFileAllocationInfo             = 5
+	CustomFileEndOfFileInfo              = 6
+	CustomFileStreamInfo                 = 7
+	CustomFileCompressionInfo            = 8
+	CustomFileAttributeTagInfo           = 9
+	CustomFileIdBothDirectoryInfo        = 10
+	CustomFileIdBothDirectoryRestartInfo = 11
+	CustomFileIoPriorityHintInfo         = 12
+	CustomFileRemoteProtocolInfo         = 13
+	CustomFileFullDirectoryInfo          = 14
+	CustomFileFullDirectoryRestartInfo   = 15
+	CustomFileStorageInfo                = 16
+	CustomFileAlignmentInfo              = 17
+	CustomFileIdInfo                     = 18
+	CustomFileIdExtdDirectoryInfo        = 19
+	CustomFileIdExtdDirectoryRestartInfo = 20
+	CustomFileDispositionInfoEx          = 21
+	CustomFileRenameInfoEx               = 22
+	CustomFileCaseSensitiveInfo          = 23
+	CustomFileNormalizedNameInfo         = 24
+)
+
+const (
+	// FileInformationClass for NtSetInformationFile
+	CustomFileBasicInformation                         = 4
+	CustomFileRenameInformation                        = 10
+	CustomFileDispositionInformation                   = 13
+	CustomFilePositionInformation                      = 14
+	CustomFileEndOfFileInformation                     = 20
+	CustomFileValidDataLengthInformation               = 39
+	CustomFileShortNameInformation                     = 40
+	CustomFileIoPriorityHintInformation                = 43
+	CustomFileReplaceCompletionInformation             = 61
+	CustomFileDispositionInformationEx                 = 64
+	CustomFileCaseSensitiveInformation                 = 71
+	CustomFileLinkInformation                          = 72
+	CustomFileCaseSensitiveInformationForceAccessCheck = 75
+	CustomFileKnownFolderInformation                   = 76
+/*
+	// Flags for FILE_RENAME_INFORMATION
+	CustomFILE_RENAME_REPLACE_IF_EXISTS                    = 0x00000001
+	CustomFILE_RENAME_POSIX_SEMANTICS                      = 0x00000002
+	CustomFILE_RENAME_SUPPRESS_PIN_STATE_INHERITANCE       = 0x00000004
+	CustomFILE_RENAME_SUPPRESS_STORAGE_RESERVE_INHERITANCE = 0x00000008
+	CustomFILE_RENAME_NO_INCREASE_AVAILABLE_SPACE          = 0x00000010
+	CustomFILE_RENAME_NO_DECREASE_AVAILABLE_SPACE          = 0x00000020
+	CustomFILE_RENAME_PRESERVE_AVAILABLE_SPACE             = 0x00000030
+	CustomFILE_RENAME_IGNORE_READONLY_ATTRIBUTE            = 0x00000040
+	CustomFILE_RENAME_FORCE_RESIZE_TARGET_SR               = 0x00000080
+	CustomFILE_RENAME_FORCE_RESIZE_SOURCE_SR               = 0x00000100
+	CustomFILE_RENAME_FORCE_RESIZE_SR                      = 0x00000180
+
+	// Flags for FILE_DISPOSITION_INFORMATION_EX
+	CustomFILE_DISPOSITION_DO_NOT_DELETE             = 0x00000000
+	CustomFILE_DISPOSITION_DELETE                    = 0x00000001
+	CustomFILE_DISPOSITION_POSIX_SEMANTICS           = 0x00000002
+	CustomFILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK = 0x00000004
+	CustomFILE_DISPOSITION_ON_CLOSE                  = 0x00000008
+	CustomFILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE = 0x00000010
+
+	// Flags for FILE_CASE_SENSITIVE_INFORMATION
+	CustomFILE_CS_FLAG_CASE_SENSITIVE_DIR = 0x00000001
+
+	// Flags for FILE_LINK_INFORMATION
+	CustomFILE_LINK_REPLACE_IF_EXISTS                    = 0x00000001
+	CustomFILE_LINK_POSIX_SEMANTICS                      = 0x00000002
+	CustomFILE_LINK_SUPPRESS_STORAGE_RESERVE_INHERITANCE = 0x00000008
+	CustomFILE_LINK_NO_INCREASE_AVAILABLE_SPACE          = 0x00000010
+	CustomFILE_LINK_NO_DECREASE_AVAILABLE_SPACE          = 0x00000020
+	CustomFILE_LINK_PRESERVE_AVAILABLE_SPACE             = 0x00000030
+	CustomFILE_LINK_IGNORE_READONLY_ATTRIBUTE            = 0x00000040
+	CustomFILE_LINK_FORCE_RESIZE_TARGET_SR               = 0x00000080
+	CustomFILE_LINK_FORCE_RESIZE_SOURCE_SR               = 0x00000100
+	CustomFILE_LINK_FORCE_RESIZE_SR                      = 0x00000180
+*/
+)
+
+//BACKPORT(NT_51): Reimplement SetFileInformationByHandle with NtSetInformationFile
+//Source: https://source.winehq.org/git/wine.git/blob/17e5ff74308f41ab662d46f684db2c6023a4a16b:/dlls/kernelbase/file.c#l3554
+func CustomSetFileInformationByHandle(handle syscall.Handle, fileInformationClass uint32, buf uintptr, bufsize uint32) (err error) {
+    var status syscall.NTStatus
+	var io syscall.IO_STATUS_BLOCK
+
+	buf_asbyteptr := (*byte)(unsafe.Pointer(buf))
+	
+	switch (fileInformationClass) {
+		case CustomFileNameInfo: fallthrough
+		case CustomFileAllocationInfo: fallthrough
+		case CustomFileStreamInfo: fallthrough
+		case CustomFileIdBothDirectoryInfo: fallthrough
+		case CustomFileIdBothDirectoryRestartInfo: fallthrough
+		case CustomFileFullDirectoryInfo: fallthrough
+		case CustomFileFullDirectoryRestartInfo: fallthrough
+		case CustomFileStorageInfo: fallthrough
+		case CustomFileAlignmentInfo: fallthrough
+		case CustomFileIdInfo: fallthrough
+		case CustomFileIdExtdDirectoryInfo: fallthrough
+		case CustomFileIdExtdDirectoryRestartInfo:
+			println("SetFileInformationByHandle: not implemented", handle, " - ", fileInformationClass)
+			return errors.New("SetFileInformationByHandle: not implemented")
+		
+		case CustomFileEndOfFileInfo:
+			status = NtSetInformationFile( handle, &io, buf_asbyteptr, bufsize, CustomFileEndOfFileInformation )
+
+		case CustomFileBasicInfo: //this seems to be the only called thing as of writing this
+			status = NtSetInformationFile( handle, &io, buf_asbyteptr, bufsize, CustomFileBasicInformation )
+
+		case CustomFileDispositionInfo:
+			status = NtSetInformationFile( handle, &io, buf_asbyteptr, bufsize, CustomFileDispositionInformation )
+
+		case CustomFileIoPriorityHintInfo:
+			status = NtSetInformationFile( handle, &io, buf_asbyteptr, bufsize, CustomFileIoPriorityHintInformation )
+
+		case CustomFileRenameInfo:
+			println("SetFileInformationByHandle: FileRenameInfo commented out but code template exists" , handle)
+			return errors.New("SetFileInformationByHandle: FileRenameInfo commented out but code template exists")
+		/*
+			FILE_RENAME_INFORMATION *rename_info;
+			UNICODE_STRING nt_name;
+			ULONG size;
+		
+			if ((status = RtlDosPathNameToNtPathName_U_WithStatus( ((FILE_RENAME_INFORMATION *)buf)->FileName, &nt_name, NULL, NULL ))) {
+				break;
+			}
+		
+			size = sizeof(*rename_info) + nt_name.Length;
+			if ((rename_info = HeapAlloc( GetProcessHeap(), 0, size ))) {
+				memcpy( rename_info, buf, sizeof(*rename_info) );
+				memcpy( rename_info->FileName, nt_name.Buffer, nt_name.Length + sizeof(WCHAR) );
+				rename_info->FileNameLength = nt_name.Length;
+				status = NtSetInformationFile( file, &io, rename_info, size, FileRenameInformation );
+				HeapFree( GetProcessHeap(), 0, rename_info );
+			}
+			RtlFreeUnicodeString( &nt_name );
+			break;
+		*/
+		case CustomFileStandardInfo: fallthrough
+		case CustomFileCompressionInfo: fallthrough
+		case CustomFileAttributeTagInfo: fallthrough
+		case CustomFileRemoteProtocolInfo: fallthrough
+		default:
+			println("SetFileInformationByHandle: ERROR_INVALID_PARAMETER" , handle, " - ", fileInformationClass)
+			return errors.New("SetFileInformationByHandle: ERROR_INVALID_PARAMETER")
+	}
+
+	if status != 0 {
+		return errors.New("SetFileInformationByHandle: Failed")
+	} else {
+		return nil
+	}
+}

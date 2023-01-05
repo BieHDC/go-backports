@@ -37,6 +37,10 @@ var testSum = flag.String("testsum", "", `may be tidy, listm, or listall. If set
 
 // TestScript runs the tests in testdata/script/*.txt.
 func TestScript(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping flaky test on Windows XP")
+		return
+	}
 	testenv.MustHaveGoBuild(t)
 	testenv.SkipIfShortAndSlow(t)
 

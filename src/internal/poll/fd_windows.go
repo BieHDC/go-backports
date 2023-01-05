@@ -9,6 +9,7 @@ import (
 	"internal/race"
 	"internal/syscall/windows"
 	"io"
+	"runtime"
 	"sync"
 	"syscall"
 	"unicode/utf16"
@@ -20,6 +21,18 @@ var (
 	initErr error
 	ioSync  uint64
 )
+
+//BACKPORT(NT_51): Backport the non cancelioex path
+// CancelIo Windows API cancels all outstanding IO for a particular
+// socket on current thread. To overcome that limitation, we run
+// special goroutine, locked to OS single thread, that both starts
+// and cancels IO. It means, there are 2 unavoidable thread switches
+// for every IO.
+// Some newer versions of Windows has new CancelIoEx API, that does
+// not have that limitation and can be used from any thread. This
+// package uses CancelIoEx API, if present, otherwise it fallback
+// to CancelIo.
+var canCancelIO bool // determines if CancelIoEx API is present
 
 // This package uses the SetFileCompletionNotificationModes Windows
 // API to skip calling GetQueuedCompletionStatus if an IO operation
@@ -59,6 +72,7 @@ func init() {
 	if e != nil {
 		initErr = e
 	}
+	canCancelIO = syscall.LoadCancelIoEx() == nil //BACKPORT(NT_51): check if we have the function
 	checkSetFileCompletionNotificationModes()
 }
 
@@ -84,6 +98,9 @@ type operation struct {
 	handle syscall.Handle
 	flags  uint32
 	bufs   []syscall.WSABuf
+
+	// //BACKPORT(NT_51): for the communication
+	errc   chan error
 }
 
 func (o *operation) InitBuf(buf []byte) {
@@ -140,13 +157,46 @@ func (o *operation) InitMsg(p []byte, oob []byte) {
 	}
 }
 
+
+// ioSrv executes net IO requests.
+type ioSrv struct {
+	req chan ioSrvReq
+}
+
+type ioSrvReq struct {
+	o      *operation
+	submit func(o *operation) error // if nil, cancel the operation
+}
+
+// ProcessRemoteIO will execute submit IO requests on behalf
+// of other goroutines, all on a single os thread, so it can
+// cancel them later. Results of all operations will be sent
+// back to their requesters via channel supplied in request.
+// It is used only when the CancelIoEx API is unavailable.
+func (s *ioSrv) ProcessRemoteIO() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for r := range s.req {
+		if r.submit != nil {
+			r.o.errc <- r.submit(r.o)
+		} else {
+			r.o.errc <- syscall.CancelIo(r.o.fd.Sysfd)
+		}
+	}
+}
+
+
 // execIO executes a single IO operation o. It submits and cancels
 // IO in the current thread for systems where Windows CancelIoEx API
 // is available. Alternatively, it passes the request onto
 // runtime netpoll and waits for completion or cancels request.
-func execIO(o *operation, submit func(o *operation) error) (int, error) {
+func (s *ioSrv) execIO(o *operation, submit func(o *operation) error) (int, error) {
 	if o.fd.pd.runtimeCtx == 0 {
 		return 0, errors.New("internal error: polling on unsupported descriptor type")
+	}
+
+	if !canCancelIO {
+		onceStartServer.Do(startServer)
 	}
 
 	fd := o.fd
@@ -156,7 +206,14 @@ func execIO(o *operation, submit func(o *operation) error) (int, error) {
 		return 0, err
 	}
 	// Start IO.
-	err = submit(o)
+	if canCancelIO {
+		err = submit(o)
+	} else {
+		// Send request to a special dedicated thread,
+		// so it can stop the IO with CancelIO later.
+		s.req <- ioSrvReq{o, submit}
+		err = <-o.errc
+	}
 	switch err {
 	case nil:
 		// IO completed immediately
@@ -194,11 +251,16 @@ func execIO(o *operation, submit func(o *operation) error) (int, error) {
 		panic("unexpected runtime.netpoll error: " + netpollErr.Error())
 	}
 	// Cancel our request.
-	err = syscall.CancelIoEx(fd.Sysfd, &o.o)
-	// Assuming ERROR_NOT_FOUND is returned, if IO is completed.
-	if err != nil && err != syscall.ERROR_NOT_FOUND {
-		// TODO(brainman): maybe do something else, but panic.
-		panic(err)
+	if canCancelIO {
+		err = syscall.CancelIoEx(fd.Sysfd, &o.o)
+		// Assuming ERROR_NOT_FOUND is returned, if IO is completed.
+		if err != nil && err != syscall.ERROR_NOT_FOUND {
+			// TODO(brainman): maybe do something else, but panic.
+			panic(err)
+		}
+	} else {
+		s.req <- ioSrvReq{o, nil}
+		<-o.errc
 	}
 	// Wait for cancellation to complete.
 	fd.pd.waitCanceled(int(o.mode))
@@ -214,6 +276,23 @@ func execIO(o *operation, submit func(o *operation) error) (int, error) {
 	// succeeded (the bytes are actually sent/recv from network).
 	return int(o.qty), nil
 }
+
+
+// Start helper goroutines.
+var rsrv, wsrv ioSrv
+var onceStartServer sync.Once
+
+func startServer() {
+	// This is called, once, when only the CancelIo API is available.
+	// Start two special goroutines, both locked to an OS thread,
+	// that start and cancel IO requests.
+	// One will process read requests, while the other will do writes.
+	rsrv.req = make(chan ioSrvReq)
+	go rsrv.ProcessRemoteIO()
+	wsrv.req = make(chan ioSrvReq)
+	go wsrv.ProcessRemoteIO()
+}
+
 
 // FD is a file descriptor. The net and os packages embed this type in
 // a larger type representing a network connection or OS file.
@@ -353,6 +432,10 @@ func (fd *FD) Init(net string, pollable bool) (string, error) {
 	fd.wop.fd = fd
 	fd.rop.runtimeCtx = fd.pd.runtimeCtx
 	fd.wop.runtimeCtx = fd.pd.runtimeCtx
+	if !canCancelIO {
+		fd.rop.errc = make(chan error)
+		fd.wop.errc = make(chan error)
+	}
 	return "", nil
 }
 
@@ -383,7 +466,9 @@ func (fd *FD) Close() error {
 		return errClosing(fd.isFile)
 	}
 	if fd.kind == kindPipe {
-		syscall.CancelIoEx(fd.Sysfd, nil)
+		if canCancelIO {
+			syscall.CancelIoEx(fd.Sysfd, nil)
+		}
 	}
 	// unblock pending reader and writer
 	fd.pd.evict()
@@ -433,7 +518,7 @@ func (fd *FD) Read(buf []byte) (int, error) {
 	} else {
 		o := &fd.rop
 		o.InitBuf(buf)
-		n, err = execIO(o, func(o *operation) error {
+		n, err = rsrv.execIO(o, func(o *operation) error {
 			return syscall.WSARecv(o.fd.Sysfd, &o.buf, 1, &o.qty, &o.flags, &o.o, nil)
 		})
 		if race.Enabled {
@@ -572,7 +657,7 @@ func (fd *FD) ReadFrom(buf []byte) (int, syscall.Sockaddr, error) {
 	defer fd.readUnlock()
 	o := &fd.rop
 	o.InitBuf(buf)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := rsrv.execIO(o, func(o *operation) error {
 		if o.rsa == nil {
 			o.rsa = new(syscall.RawSockaddrAny)
 		}
@@ -601,7 +686,7 @@ func (fd *FD) ReadFromInet4(buf []byte, sa4 *syscall.SockaddrInet4) (int, error)
 	defer fd.readUnlock()
 	o := &fd.rop
 	o.InitBuf(buf)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := rsrv.execIO(o, func(o *operation) error {
 		if o.rsa == nil {
 			o.rsa = new(syscall.RawSockaddrAny)
 		}
@@ -630,7 +715,7 @@ func (fd *FD) ReadFromInet6(buf []byte, sa6 *syscall.SockaddrInet6) (int, error)
 	defer fd.readUnlock()
 	o := &fd.rop
 	o.InitBuf(buf)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := rsrv.execIO(o, func(o *operation) error {
 		if o.rsa == nil {
 			o.rsa = new(syscall.RawSockaddrAny)
 		}
@@ -686,7 +771,7 @@ func (fd *FD) Write(buf []byte) (int, error) {
 			}
 			o := &fd.wop
 			o.InitBuf(b)
-			n, err = execIO(o, func(o *operation) error {
+			n, err = wsrv.execIO(o, func(o *operation) error {
 				return syscall.WSASend(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, &o.o, nil)
 			})
 		}
@@ -795,7 +880,7 @@ func (fd *FD) Writev(buf *[][]byte) (int64, error) {
 	}
 	o := &fd.wop
 	o.InitBufs(buf)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := wsrv.execIO(o, func(o *operation) error {
 		return syscall.WSASend(o.fd.Sysfd, &o.bufs[0], uint32(len(o.bufs)), &o.qty, 0, &o.o, nil)
 	})
 	o.ClearBufs()
@@ -816,7 +901,7 @@ func (fd *FD) WriteTo(buf []byte, sa syscall.Sockaddr) (int, error) {
 		o := &fd.wop
 		o.InitBuf(buf)
 		o.sa = sa
-		n, err := execIO(o, func(o *operation) error {
+		n, err := wsrv.execIO(o, func(o *operation) error {
 			return syscall.WSASendto(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, o.sa, &o.o, nil)
 		})
 		return n, err
@@ -831,7 +916,7 @@ func (fd *FD) WriteTo(buf []byte, sa syscall.Sockaddr) (int, error) {
 		o := &fd.wop
 		o.InitBuf(b)
 		o.sa = sa
-		n, err := execIO(o, func(o *operation) error {
+		n, err := wsrv.execIO(o, func(o *operation) error {
 			return syscall.WSASendto(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, o.sa, &o.o, nil)
 		})
 		ntotal += int(n)
@@ -854,7 +939,7 @@ func (fd *FD) WriteToInet4(buf []byte, sa4 *syscall.SockaddrInet4) (int, error) 
 		// handle zero-byte payload
 		o := &fd.wop
 		o.InitBuf(buf)
-		n, err := execIO(o, func(o *operation) error {
+		n, err := wsrv.execIO(o, func(o *operation) error {
 			return windows.WSASendtoInet4(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, sa4, &o.o, nil)
 		})
 		return n, err
@@ -868,7 +953,7 @@ func (fd *FD) WriteToInet4(buf []byte, sa4 *syscall.SockaddrInet4) (int, error) 
 		}
 		o := &fd.wop
 		o.InitBuf(b)
-		n, err := execIO(o, func(o *operation) error {
+		n, err := wsrv.execIO(o, func(o *operation) error {
 			return windows.WSASendtoInet4(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, sa4, &o.o, nil)
 		})
 		ntotal += int(n)
@@ -891,7 +976,7 @@ func (fd *FD) WriteToInet6(buf []byte, sa6 *syscall.SockaddrInet6) (int, error) 
 		// handle zero-byte payload
 		o := &fd.wop
 		o.InitBuf(buf)
-		n, err := execIO(o, func(o *operation) error {
+		n, err := wsrv.execIO(o, func(o *operation) error {
 			return windows.WSASendtoInet6(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, sa6, &o.o, nil)
 		})
 		return n, err
@@ -905,7 +990,7 @@ func (fd *FD) WriteToInet6(buf []byte, sa6 *syscall.SockaddrInet6) (int, error) 
 		}
 		o := &fd.wop
 		o.InitBuf(b)
-		n, err := execIO(o, func(o *operation) error {
+		n, err := wsrv.execIO(o, func(o *operation) error {
 			return windows.WSASendtoInet6(o.fd.Sysfd, &o.buf, 1, &o.qty, 0, sa6, &o.o, nil)
 		})
 		ntotal += int(n)
@@ -923,7 +1008,7 @@ func (fd *FD) WriteToInet6(buf []byte, sa6 *syscall.SockaddrInet6) (int, error) 
 func (fd *FD) ConnectEx(ra syscall.Sockaddr) error {
 	o := &fd.wop
 	o.sa = ra
-	_, err := execIO(o, func(o *operation) error {
+	_, err := wsrv.execIO(o, func(o *operation) error {
 		return ConnectExFunc(o.fd.Sysfd, o.sa, nil, 0, nil, &o.o)
 	})
 	return err
@@ -933,7 +1018,7 @@ func (fd *FD) acceptOne(s syscall.Handle, rawsa []syscall.RawSockaddrAny, o *ope
 	// Submit accept request.
 	o.handle = s
 	o.rsan = int32(unsafe.Sizeof(rawsa[0]))
-	_, err := execIO(o, func(o *operation) error {
+	_, err := rsrv.execIO(o, func(o *operation) error {
 		return AcceptFunc(o.fd.Sysfd, o.handle, (*byte)(unsafe.Pointer(&rawsa[0])), 0, uint32(o.rsan), uint32(o.rsan), &o.qty, &o.o)
 	})
 	if err != nil {
@@ -1075,7 +1160,7 @@ func (fd *FD) RawRead(f func(uintptr) bool) error {
 		if !fd.IsStream {
 			o.flags |= windows.MSG_PEEK
 		}
-		_, err := execIO(o, func(o *operation) error {
+		_, err := rsrv.execIO(o, func(o *operation) error {
 			return syscall.WSARecv(o.fd.Sysfd, &o.buf, 1, &o.qty, &o.flags, &o.o, nil)
 		})
 		if err == windows.WSAEMSGSIZE {
@@ -1171,7 +1256,7 @@ func (fd *FD) ReadMsg(p []byte, oob []byte, flags int) (int, int, int, syscall.S
 	o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 	o.msg.Namelen = int32(unsafe.Sizeof(*o.rsa))
 	o.msg.Flags = uint32(flags)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := rsrv.execIO(o, func(o *operation) error {
 		return windows.WSARecvMsg(o.fd.Sysfd, &o.msg, &o.qty, &o.o, nil)
 	})
 	err = fd.eofError(n, err)
@@ -1201,7 +1286,7 @@ func (fd *FD) ReadMsgInet4(p []byte, oob []byte, flags int, sa4 *syscall.Sockadd
 	o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 	o.msg.Namelen = int32(unsafe.Sizeof(*o.rsa))
 	o.msg.Flags = uint32(flags)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := rsrv.execIO(o, func(o *operation) error {
 		return windows.WSARecvMsg(o.fd.Sysfd, &o.msg, &o.qty, &o.o, nil)
 	})
 	err = fd.eofError(n, err)
@@ -1230,7 +1315,7 @@ func (fd *FD) ReadMsgInet6(p []byte, oob []byte, flags int, sa6 *syscall.Sockadd
 	o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 	o.msg.Namelen = int32(unsafe.Sizeof(*o.rsa))
 	o.msg.Flags = uint32(flags)
-	n, err := execIO(o, func(o *operation) error {
+	n, err := rsrv.execIO(o, func(o *operation) error {
 		return windows.WSARecvMsg(o.fd.Sysfd, &o.msg, &o.qty, &o.o, nil)
 	})
 	err = fd.eofError(n, err)
@@ -1264,7 +1349,7 @@ func (fd *FD) WriteMsg(p []byte, oob []byte, sa syscall.Sockaddr) (int, int, err
 		o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 		o.msg.Namelen = len
 	}
-	n, err := execIO(o, func(o *operation) error {
+	n, err := wsrv.execIO(o, func(o *operation) error {
 		return windows.WSASendMsg(o.fd.Sysfd, &o.msg, 0, &o.qty, &o.o, nil)
 	})
 	return n, int(o.msg.Control.Len), err
@@ -1289,7 +1374,7 @@ func (fd *FD) WriteMsgInet4(p []byte, oob []byte, sa *syscall.SockaddrInet4) (in
 	len := sockaddrInet4ToRaw(o.rsa, sa)
 	o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 	o.msg.Namelen = len
-	n, err := execIO(o, func(o *operation) error {
+	n, err := wsrv.execIO(o, func(o *operation) error {
 		return windows.WSASendMsg(o.fd.Sysfd, &o.msg, 0, &o.qty, &o.o, nil)
 	})
 	return n, int(o.msg.Control.Len), err
@@ -1314,7 +1399,7 @@ func (fd *FD) WriteMsgInet6(p []byte, oob []byte, sa *syscall.SockaddrInet6) (in
 	len := sockaddrInet6ToRaw(o.rsa, sa)
 	o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 	o.msg.Namelen = len
-	n, err := execIO(o, func(o *operation) error {
+	n, err := wsrv.execIO(o, func(o *operation) error {
 		return windows.WSASendMsg(o.fd.Sysfd, &o.msg, 0, &o.qty, &o.o, nil)
 	})
 	return n, int(o.msg.Control.Len), err

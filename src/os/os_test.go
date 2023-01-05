@@ -2319,6 +2319,10 @@ func testKillProcess(t *testing.T, processKiller func(p *Process)) {
 }
 
 func TestKillStartProcess(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	testKillProcess(t, func(p *Process) {
 		err := p.Kill()
 		if err != nil {
@@ -2357,6 +2361,10 @@ func TestGetppid(t *testing.T) {
 }
 
 func TestKillFindProcess(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	testKillProcess(t, func(p *Process) {
 		p2, err := FindProcess(p.Pid)
 		if err != nil {

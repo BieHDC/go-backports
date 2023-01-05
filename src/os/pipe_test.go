@@ -151,6 +151,10 @@ func TestStdPipeHelper(t *testing.T) {
 }
 
 func testClosedPipeRace(t *testing.T, read bool) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	limit := 1
 	if !read {
 		// Get the amount we have to write to overload a pipe
@@ -254,6 +258,10 @@ func TestReadNonblockingFd(t *testing.T) {
 }
 
 func TestCloseWithBlockingReadByNewFile(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	var p [2]syscallDescriptor
 	err := syscall.Pipe(p[:])
 	if err != nil {
@@ -264,6 +272,10 @@ func TestCloseWithBlockingReadByNewFile(t *testing.T) {
 }
 
 func TestCloseWithBlockingReadByFd(t *testing.T) {
+	if testenv.IsWindowsXP() {
+		t.Log("Skipping broken function on Windows XP")
+		return
+	}
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)

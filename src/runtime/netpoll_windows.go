@@ -109,48 +109,87 @@ func netpoll(delay int64) gList {
 		wait = 1e9
 	}
 
-	n = uint32(len(entries) / int(gomaxprocs))
-	if n < 8 {
-		n = 8
-	}
-	if delay != 0 {
-		mp.blocked = true
-	}
-	if stdcall6(_GetQueuedCompletionStatusEx, iocphandle, uintptr(unsafe.Pointer(&entries[0])), uintptr(n), uintptr(unsafe.Pointer(&n)), uintptr(wait), 0) == 0 {
-		mp.blocked = false
-		errno = int32(getlasterror())
-		if errno == _WAIT_TIMEOUT {
-			return gList{}
+	if _GetQueuedCompletionStatusEx != nil {
+		n = uint32(len(entries) / int(gomaxprocs))
+		if n < 8 {
+			n = 8
 		}
-		println("runtime: GetQueuedCompletionStatusEx failed (errno=", errno, ")")
-		throw("runtime: netpoll failed")
-	}
-	mp.blocked = false
-	for i = 0; i < n; i++ {
-		op = entries[i].op
-		if op != nil {
-			errno = 0
-			qty = 0
-			if stdcall5(_WSAGetOverlappedResult, op.pd.fd, uintptr(unsafe.Pointer(op)), uintptr(unsafe.Pointer(&qty)), 0, uintptr(unsafe.Pointer(&flags))) == 0 {
-				errno = int32(getlasterror())
+		if delay != 0 {
+			mp.blocked = true
+		}
+		if stdcall6(_GetQueuedCompletionStatusEx, iocphandle, uintptr(unsafe.Pointer(&entries[0])), uintptr(n), uintptr(unsafe.Pointer(&n)), uintptr(wait), 0) == 0 {
+			mp.blocked = false
+			errno = int32(getlasterror())
+			if errno == _WAIT_TIMEOUT {
+				return gList{}
 			}
-			handlecompletion(&toRun, op, errno, qty)
-		} else {
+			println("runtime: GetQueuedCompletionStatusEx failed (errno=", errno, ")")
+			throw("runtime: netpoll failed")
+		}
+		mp.blocked = false
+		for i = 0; i < n; i++ {
+			op = entries[i].op
+			if op != nil {
+				errno = 0
+				qty = 0
+				if stdcall5(_WSAGetOverlappedResult, op.pd.fd, uintptr(unsafe.Pointer(op)), uintptr(unsafe.Pointer(&qty)), 0, uintptr(unsafe.Pointer(&flags))) == 0 {
+					errno = int32(getlasterror())
+				}
+				handlecompletion(&toRun, op, errno, qty)
+			} else {
+				netpollWakeSig.Store(0)
+				if delay == 0 {
+					// Forward the notification to the
+					// blocked poller.
+					netpollBreak()
+				}
+			}
+		}
+	} else {
+		//BACKPORT(NT_51): Readded for compatibility
+		var key uint32
+		op = nil
+		errno = 0
+		qty = 0
+		if delay != 0 {
+			mp.blocked = true
+		}
+		if stdcall5(_GetQueuedCompletionStatus, iocphandle, uintptr(unsafe.Pointer(&qty)), uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&op)), uintptr(wait)) == 0 {
+			mp.blocked = false
+			errno = int32(getlasterror())
+			if errno == _WAIT_TIMEOUT {
+				return gList{}
+			}
+			if op == nil {
+				println("runtime: GetQueuedCompletionStatus failed (errno=", errno, ")")
+				throw("runtime: netpoll failed")
+			}
+			// dequeued failed IO packet, so report that
+		}
+		mp.blocked = false
+		if op == nil {
 			netpollWakeSig.Store(0)
 			if delay == 0 {
 				// Forward the notification to the
 				// blocked poller.
 				netpollBreak()
 			}
+			return gList{}
 		}
+
+		handlecompletion(&toRun, op, errno, qty)
 	}
 	return toRun
 }
 
 func handlecompletion(toRun *gList, op *net_op, errno int32, qty uint32) {
+	if op == nil {
+		println("runtime: GetQueuedCompletionStatus returned op == nil")
+		throw("runtime: netpoll failed")
+	}
 	mode := op.mode
 	if mode != 'r' && mode != 'w' {
-		println("runtime: GetQueuedCompletionStatusEx returned invalid mode=", mode)
+		println("runtime: GetQueuedCompletionStatus(Ex) returned invalid mode=", mode)
 		throw("runtime: netpoll failed")
 	}
 	op.errno = errno
