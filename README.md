@@ -3,40 +3,60 @@
 Go is an open source programming language that makes it easy to build simple,
 reliable, and efficient software.
 
-![Gopher image](https://golang.org/doc/gopher/fiveyears.jpg)
-*Gopher image by [Renee French][rf], licensed under [Creative Commons 4.0 Attributions license][cc4-by].*
-
-Our canonical Git repository is located at https://go.googlesource.com/go.
+The canonical Git repository is located at https://go.googlesource.com/go.
 There is a mirror of the repository at https://github.com/golang/go.
 
 Unless otherwise noted, the Go source files are distributed under the
 BSD-style license found in the LICENSE file.
 
-### Download and Install
+##  Fork alert!
 
-#### Binary Distributions
+You are viewing a fork right now that adds support for older Windows Versions.
+Currently this is Windows XP (NT 5.1) and Windows 7 (NT 6.1).
+The code is in the desired branches you can check out.
 
-Official binary distributions are available at https://go.dev/dl/.
+## Current Branches
 
-After downloading a binary release, visit https://go.dev/doc/install
-for installation instructions.
+### Windows XP
+- `release-branch.go1.19-nt51` Go 1.19 for Windows XP (32/64) - overwhelmingly functional
+- `release-branch.go1.20-nt51` Go 1.20 for Windows XP (32/64) - overwhelmingly functional
+- `release-branch.go1.21-nt51` Go 1.21 for Windows XP (32/64) - it keeps getting harder, but it still works
+
+### Windows 7
+- `release-branch.go1.21-nt61` Go 1.21 for Windows 7 (the first one officially unsupported)
+
+## Updates
+
+I will update a branch on request, please open an issue about it on Github if you need an updated toolchain.
+
+
+#### Bootstrapping from another OS Example
+
+Adapt the parameters as you need them, for example `amd64`->`386`.
+
+	git clone --branch release-branch.go1.19-nt51 --single-branch https://github.com/BieHDC/go-backports
+	cd go-backports/src/
+	GOOS=windows GOARCH=amd64 ./bootstrap.bash
+	cd ..
+	cd ..
+	-> copy go-windows-amd64-bootstrap.tbz to the destination os
+	-> zip up the "go-backports" folder and copy it also to the destination os
+	-> unzip them to C:\
+	-> run these commands (and adapt the paths if you changed them)
+	set GOROOT_BOOTSTRAP=C:\go-windows-amd64-bootstrap
+	set GOROOT=C:\go
+	set CGO_ENABLED=0
+	cd C:\go\src
+	.\all.bat (or make.bat if you dont want tests)
+	-> when all goes right, you just need to follow "Install From Source" below and its done.
+	NOTES: Yes you need both and yes they need to be different folders, you cant bootstrap into bootstrap!
 
 #### Install From Source
 
-If a binary distribution is not available for your combination of
-operating system and architecture, visit
-https://go.dev/doc/install/source
-for source installation instructions.
+Run `set "PATH=%PATH%;c:\go\bin` in cmd.exe exactly like that and you have `go` available after bootstrapping.
+You can make that permanent with `setx` or use the gui.
 
 ### Contributing
 
-Go is the work of thousands of contributors. We appreciate your help!
+See CONTRIBUTING.md
 
-To contribute, please read the contribution guidelines at https://go.dev/doc/contribute.
-
-Note that the Go project uses the issue tracker for bug reports and
-proposals only. See https://go.dev/wiki/Questions for a list of
-places to ask questions about the Go language.
-
-[rf]: https://reneefrench.blogspot.com/
-[cc4-by]: https://creativecommons.org/licenses/by/4.0/
