@@ -326,8 +326,8 @@ func (fd *FD) Init(net string, pollable bool) (string, error) {
 		// We do not use events, so we can skip them always.
 		flags := uint8(syscall.FILE_SKIP_SET_EVENT_ON_HANDLE)
 		switch net {
-		case "tcp", "tcp4", "tcp6",
-			"udp", "udp4", "udp6":
+		case "tcp", "tcp4", "tcp6":
+			//"udp", "udp4", "udp6": // Undo for Windows 7 (932d0ae83ea8ce9adb2b23b28788b860447b1f61)
 			flags |= syscall.FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
 		}
 		err := syscall.SetFileCompletionNotificationModes(fd.Sysfd, flags)
