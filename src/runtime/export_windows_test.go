@@ -41,3 +41,7 @@ func NewContextStub() *ContextStub {
 	}
 	return &ContextStub{ctx}
 }
+
+func LoadLibraryExStatus() (useEx, haveEx, haveFlags bool) {
+	return useLoadLibraryEx, _LoadLibraryExW != nil, _AddDllDirectory != nil
+}
