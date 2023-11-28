@@ -35,7 +35,12 @@ func adapterAddresses() ([]*windows.IpAdapterAddresses, error) {
 		}
 	}
 	var aas []*windows.IpAdapterAddresses
+	// Backport: My Windows XP returned interfaces with duplicated entries,
+	//so lets try this workaround, which seems to make the tests happy too.
+	var newindex uint32 = 42
 	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&b[0])); aa != nil; aa = aa.Next {
+		aa.IfIndex = newindex
+		newindex = newindex + 1
 		aas = append(aas, aa)
 	}
 	return aas, nil
@@ -110,6 +115,10 @@ func interfaceAddrTable(ifi *Interface) ([]Addr, error) {
 		if index == 0 { // ipv6IfIndex is a substitute for ifIndex
 			index = aa.Ipv6IfIndex
 		}
+		pfx4, pfx6, err := addrPrefixTable(aa)
+		if err != nil {
+			return nil, err
+		}
 		if ifi == nil || ifi.Index == int(index) {
 			for puni := aa.FirstUnicastAddress; puni != nil; puni = puni.Next {
 				sa, err := puni.Address.Sockaddr.Sockaddr()
@@ -118,9 +127,11 @@ func interfaceAddrTable(ifi *Interface) ([]Addr, error) {
 				}
 				switch sa := sa.(type) {
 				case *syscall.SockaddrInet4:
-					ifat = append(ifat, &IPNet{IP: IPv4(sa.Addr[0], sa.Addr[1], sa.Addr[2], sa.Addr[3]), Mask: CIDRMask(int(puni.OnLinkPrefixLength), 8*IPv4len)})
+					l := addrPrefixLen(pfx4, IP(sa.Addr[:]))
+					ifat = append(ifat, &IPNet{IP: IPv4(sa.Addr[0], sa.Addr[1], sa.Addr[2], sa.Addr[3]), Mask: CIDRMask(l, 8*IPv4len)})
 				case *syscall.SockaddrInet6:
-					ifa := &IPNet{IP: make(IP, IPv6len), Mask: CIDRMask(int(puni.OnLinkPrefixLength), 8*IPv6len)}
+					l := addrPrefixLen(pfx6, IP(sa.Addr[:]))
+					ifa := &IPNet{IP: make(IP, IPv6len), Mask: CIDRMask(l, 8*IPv6len)}
 					copy(ifa.IP, sa.Addr[:])
 					ifat = append(ifat, ifa)
 				}
@@ -142,6 +153,60 @@ func interfaceAddrTable(ifi *Interface) ([]Addr, error) {
 		}
 	}
 	return ifat, nil
+}
+
+func addrPrefixTable(aa *windows.IpAdapterAddresses) (pfx4, pfx6 []IPNet, err error) {
+	for p := aa.FirstPrefix; p != nil; p = p.Next {
+		sa, err := p.Address.Sockaddr.Sockaddr()
+		if err != nil {
+			return nil, nil, os.NewSyscallError("sockaddr", err)
+		}
+		switch sa := sa.(type) {
+		case *syscall.SockaddrInet4:
+			pfx := IPNet{IP: IP(sa.Addr[:]), Mask: CIDRMask(int(p.PrefixLength), 8*IPv4len)}
+			pfx4 = append(pfx4, pfx)
+		case *syscall.SockaddrInet6:
+			pfx := IPNet{IP: IP(sa.Addr[:]), Mask: CIDRMask(int(p.PrefixLength), 8*IPv6len)}
+			pfx6 = append(pfx6, pfx)
+		}
+	}
+	return
+}
+
+// Backport: Check
+// addrPrefixLen returns an appropriate prefix length in bits for ip
+// from pfxs. It returns 32 or 128 when no appropriate on-link address
+// prefix found.
+//
+// NOTE: This is pretty naive implementation that contains many
+// allocations and non-effective linear search, and should not be used
+// freely.
+func addrPrefixLen(pfxs []IPNet, ip IP) int {
+	var l int
+	var cand *IPNet
+	for i := range pfxs {
+		if !pfxs[i].Contains(ip) {
+			continue
+		}
+		if cand == nil {
+			l, _ = pfxs[i].Mask.Size()
+			cand = &pfxs[i]
+			continue
+		}
+		m, _ := pfxs[i].Mask.Size()
+		if m > l {
+			l = m
+			cand = &pfxs[i]
+			continue
+		}
+	}
+	if l > 0 {
+		return l
+	}
+	if ip.To4() != nil {
+		return 8 * IPv4len
+	}
+	return 8 * IPv6len
 }
 
 // interfaceMulticastAddrTable returns addresses for a specific

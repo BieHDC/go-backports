@@ -9,7 +9,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 )
 
 // A fileStat is the implementation of FileInfo returned by Stat and Lstat.
@@ -49,6 +48,7 @@ func newFileStatFromGetFileInformationByHandle(path string, h syscall.Handle) (f
 	}
 
 	var ti windows.FILE_ATTRIBUTE_TAG_INFO
+	/*
 	err = windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&ti)), uint32(unsafe.Sizeof(ti)))
 	if err != nil {
 		if errno, ok := err.(syscall.Errno); ok && errno == windows.ERROR_INVALID_PARAMETER {
@@ -59,6 +59,21 @@ func newFileStatFromGetFileInformationByHandle(path string, h syscall.Handle) (f
 			ti.ReparseTag = 0
 		} else {
 			return nil, &PathError{Op: "GetFileInformationByHandleEx", Path: path, Err: err}
+		}
+	}
+	*/
+	// Backport: Fallback
+	namep, err := syscall.UTF16PtrFromString(fixLongPath(path))
+	if err != nil {
+		ti.ReparseTag = 0
+	} else {
+		var fd syscall.Win32finddata
+		sh, err := syscall.FindFirstFile(namep, &fd)
+		if err != nil {
+			ti.ReparseTag = 0
+		} else {
+			syscall.FindClose(sh)
+			ti.ReparseTag = fd.Reserved0
 		}
 	}
 

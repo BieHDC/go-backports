@@ -32,6 +32,9 @@ func initWinHasSymlink() {
 }
 
 func hasSymlink() (ok bool, reason string) {
+	// Backport: We dont have symlinks
+	return false, ": symlinks are not supported on your version of Windows"
+
 	symlinkOnce.Do(initWinHasSymlink)
 
 	switch winSymlinkErr {

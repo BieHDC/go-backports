@@ -19,25 +19,26 @@ const (
 )
 
 func preventErrorDialogs() {
-	errormode := stdcall0(_GetErrorMode)
-	stdcall1(_SetErrorMode, errormode|_SEM_FAILCRITICALERRORS|_SEM_NOGPFAULTERRORBOX|_SEM_NOOPENFILEERRORBOX)
+	//errormode := stdcall0(_GetErrorMode)
+	//stdcall1(_SetErrorMode, errormode|_SEM_FAILCRITICALERRORS|_SEM_NOGPFAULTERRORBOX|_SEM_NOOPENFILEERRORBOX)
 
 	// Disable WER fault reporting UI.
 	// Do this even if WER is disabled as a whole,
 	// as WER might be enabled later with setTraceback("wer")
 	// and we still want the fault reporting UI to be disabled if this happens.
-	var werflags uintptr
-	stdcall2(_WerGetFlags, currentProcess, uintptr(unsafe.Pointer(&werflags)))
-	stdcall1(_WerSetFlags, werflags|_WER_FAULT_REPORTING_NO_UI)
+	// Backport: dont exist on xp
+	//var werflags uintptr
+	//stdcall2(_WerGetFlags, currentProcess, uintptr(unsafe.Pointer(&werflags)))
+	//stdcall1(_WerSetFlags, werflags|_WER_FAULT_REPORTING_NO_UI)
 }
 
 // enableWER re-enables Windows error reporting without fault reporting UI.
 func enableWER() {
 	// re-enable Windows Error Reporting
-	errormode := stdcall0(_GetErrorMode)
-	if errormode&_SEM_NOGPFAULTERRORBOX != 0 {
-		stdcall1(_SetErrorMode, errormode^_SEM_NOGPFAULTERRORBOX)
-	}
+	//errormode := stdcall0(_GetErrorMode)
+	//if errormode&_SEM_NOGPFAULTERRORBOX != 0 {
+	//	stdcall1(_SetErrorMode, errormode^_SEM_NOGPFAULTERRORBOX)
+	//}
 }
 
 // in sys_windows_386.s, sys_windows_amd64.s, sys_windows_arm.s, and sys_windows_arm64.s
@@ -417,6 +418,8 @@ func crash() {
 //
 //go:nosplit
 func dieFromException(info *exceptionrecord, r *context) {
+	// Backport: in the past this was just a no-op
+	/*
 	if info == nil {
 		gp := getg()
 		if gp.sig != 0 {
@@ -439,6 +442,7 @@ func dieFromException(info *exceptionrecord, r *context) {
 	}
 	const FAIL_FAST_GENERATE_EXCEPTION_ADDRESS = 0x1
 	stdcall3(_RaiseFailFastException, uintptr(unsafe.Pointer(info)), uintptr(unsafe.Pointer(r)), FAIL_FAST_GENERATE_EXCEPTION_ADDRESS)
+	*/
 }
 
 // gsignalStack is unused on Windows.

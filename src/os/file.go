@@ -413,6 +413,12 @@ func UserCacheDir() (string, error) {
 	case "windows":
 		dir = Getenv("LocalAppData")
 		if dir == "" {
+			// Backport: Relevant again
+			// Fall back to %AppData%, the old name of
+			// %LocalAppData% on Windows XP.
+			dir = Getenv("AppData")
+		}
+		if dir == "" {
 			return "", errors.New("%LocalAppData% is not defined")
 		}
 

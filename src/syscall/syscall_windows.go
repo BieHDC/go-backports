@@ -325,9 +325,6 @@ func NewCallbackCDecl(fn any) uintptr {
 // This function returns 1 byte BOOLEAN rather than the 4 byte BOOL.
 //sys	CreateSymbolicLink(symlinkfilename *uint16, targetfilename *uint16, flags uint32) (err error) [failretval&0xff==0] = CreateSymbolicLinkW
 //sys	CreateHardLink(filename *uint16, existingfilename *uint16, reserved uintptr) (err error) [failretval&0xff==0] = CreateHardLinkW
-//sys	initializeProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, attrcount uint32, flags uint32, size *uintptr) (err error) = InitializeProcThreadAttributeList
-//sys	deleteProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) = DeleteProcThreadAttributeList
-//sys	updateProcThreadAttribute(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) = UpdateProcThreadAttribute
 //sys	getFinalPathNameByHandle(file Handle, filePath *uint16, filePathSize uint32, flags uint32) (n uint32, err error) [n == 0 || n >= filePathSize] = kernel32.GetFinalPathNameByHandleW
 
 // syscall interface implementation for other packages
@@ -1387,27 +1384,6 @@ func GetQueuedCompletionStatus(cphandle Handle, qty *uint32, key *uint32, overla
 // Deprecated: PostQueuedCompletionStatus has the wrong function signature. Use x/sys/windows.PostQueuedCompletionStatus.
 func PostQueuedCompletionStatus(cphandle Handle, qty uint32, key uint32, overlapped *Overlapped) error {
 	return postQueuedCompletionStatus(cphandle, qty, uintptr(key), overlapped)
-}
-
-// newProcThreadAttributeList allocates new PROC_THREAD_ATTRIBUTE_LIST, with
-// the requested maximum number of attributes, which must be cleaned up by
-// deleteProcThreadAttributeList.
-func newProcThreadAttributeList(maxAttrCount uint32) (*_PROC_THREAD_ATTRIBUTE_LIST, error) {
-	var size uintptr
-	err := initializeProcThreadAttributeList(nil, maxAttrCount, 0, &size)
-	if err != ERROR_INSUFFICIENT_BUFFER {
-		if err == nil {
-			return nil, errorspkg.New("unable to query buffer size from InitializeProcThreadAttributeList")
-		}
-		return nil, err
-	}
-	// size is guaranteed to be ≥1 by initializeProcThreadAttributeList.
-	al := (*_PROC_THREAD_ATTRIBUTE_LIST)(unsafe.Pointer(&make([]byte, size)[0]))
-	err = initializeProcThreadAttributeList(al, maxAttrCount, 0, &size)
-	if err != nil {
-		return nil, err
-	}
-	return al, nil
 }
 
 // RegEnumKeyEx enumerates the subkeys of an open registry key.

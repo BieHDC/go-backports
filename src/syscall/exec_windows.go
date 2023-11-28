@@ -117,14 +117,14 @@ func makeCmdLine(args []string) string {
 // terminated strings followed by a nil.
 // Last bytes are two UCS-2 NULs, or four NUL bytes.
 // If any string contains a NUL, it returns (nil, EINVAL).
-func createEnvBlock(envv []string) (*uint16, error) {
+func createEnvBlock(envv []string) (*uint16) {
 	if len(envv) == 0 {
-		return &utf16.Encode([]rune("\x00\x00"))[0], nil
+		return &utf16.Encode([]rune("\x00\x00"))[0]
 	}
 	length := 0
 	for _, s := range envv {
 		if bytealg.IndexByteString(s, 0) != -1 {
-			return nil, EINVAL
+			return nil
 		}
 		length += len(s) + 1
 	}
@@ -140,7 +140,7 @@ func createEnvBlock(envv []string) (*uint16, error) {
 	}
 	copy(b[i:i+1], []byte{0})
 
-	return &utf16.Encode([]rune(string(b)))[0], nil
+	return &utf16.Encode([]rune(string(b)))[0]
 }
 
 func CloseOnExec(fd Handle) {
@@ -318,109 +318,44 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 		}
 	}
 
-	var maj, min, build uint32
-	rtlGetNtVersionNumbers(&maj, &min, &build)
-	isWin7 := maj < 6 || (maj == 6 && min <= 1)
-	// NT kernel handles are divisible by 4, with the bottom 3 bits left as
-	// a tag. The fully set tag correlates with the types of handles we're
-	// concerned about here.  Except, the kernel will interpret some
-	// special handle values, like -1, -2, and so forth, so kernelbase.dll
-	// checks to see that those bottom three bits are checked, but that top
-	// bit is not checked.
-	isLegacyWin7ConsoleHandle := func(handle Handle) bool { return isWin7 && handle&0x10000003 == 3 }
+	ForkLock.Lock()
+	defer ForkLock.Unlock()
 
 	p, _ := GetCurrentProcess()
-	parentProcess := p
-	if sys.ParentProcess != 0 {
-		parentProcess = sys.ParentProcess
-	}
 	fd := make([]Handle, len(attr.Files))
 	for i := range attr.Files {
 		if attr.Files[i] > 0 {
-			destinationProcessHandle := parentProcess
-
-			// On Windows 7, console handles aren't real handles, and can only be duplicated
-			// into the current process, not a parent one, which amounts to the same thing.
-			if parentProcess != p && isLegacyWin7ConsoleHandle(Handle(attr.Files[i])) {
-				destinationProcessHandle = p
-			}
-
-			err := DuplicateHandle(p, Handle(attr.Files[i]), destinationProcessHandle, &fd[i], 0, true, DUPLICATE_SAME_ACCESS)
+			err := DuplicateHandle(p, Handle(attr.Files[i]), p, &fd[i], 0, true, DUPLICATE_SAME_ACCESS)
 			if err != nil {
 				return 0, 0, err
 			}
-			defer DuplicateHandle(parentProcess, fd[i], 0, nil, 0, false, DUPLICATE_CLOSE_SOURCE)
+			defer CloseHandle(Handle(fd[i]))
 		}
 	}
-	si := new(_STARTUPINFOEXW)
-	si.ProcThreadAttributeList, err = newProcThreadAttributeList(2)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer deleteProcThreadAttributeList(si.ProcThreadAttributeList)
+	si := new(StartupInfo)
 	si.Cb = uint32(unsafe.Sizeof(*si))
 	si.Flags = STARTF_USESTDHANDLES
 	if sys.HideWindow {
 		si.Flags |= STARTF_USESHOWWINDOW
 		si.ShowWindow = SW_HIDE
 	}
-	if sys.ParentProcess != 0 {
-		err = updateProcThreadAttribute(si.ProcThreadAttributeList, 0, _PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, unsafe.Pointer(&sys.ParentProcess), unsafe.Sizeof(sys.ParentProcess), nil, nil)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
 	si.StdInput = fd[0]
 	si.StdOutput = fd[1]
 	si.StdErr = fd[2]
 
-	fd = append(fd, sys.AdditionalInheritedHandles...)
-
-	// On Windows 7, console handles aren't real handles, so don't pass them
-	// through to PROC_THREAD_ATTRIBUTE_HANDLE_LIST.
-	for i := range fd {
-		if isLegacyWin7ConsoleHandle(fd[i]) {
-			fd[i] = 0
-		}
-	}
-
-	// The presence of a NULL handle in the list is enough to cause PROC_THREAD_ATTRIBUTE_HANDLE_LIST
-	// to treat the entire list as empty, so remove NULL handles.
-	j := 0
-	for i := range fd {
-		if fd[i] != 0 {
-			fd[j] = fd[i]
-			j++
-		}
-	}
-	fd = fd[:j]
-
-	willInheritHandles := len(fd) > 0 && !sys.NoInheritHandles
-
-	// Do not accidentally inherit more than these handles.
-	if willInheritHandles {
-		err = updateProcThreadAttribute(si.ProcThreadAttributeList, 0, _PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&fd[0]), uintptr(len(fd))*unsafe.Sizeof(fd[0]), nil, nil)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-
-	envBlock, err := createEnvBlock(attr.Env)
-	if err != nil {
-		return 0, 0, err
-	}
-
 	pi := new(ProcessInformation)
-	flags := sys.CreationFlags | CREATE_UNICODE_ENVIRONMENT | _EXTENDED_STARTUPINFO_PRESENT
+
+	flags := sys.CreationFlags | CREATE_UNICODE_ENVIRONMENT
 	if sys.Token != 0 {
-		err = CreateProcessAsUser(sys.Token, argv0p, argvp, sys.ProcessAttributes, sys.ThreadAttributes, willInheritHandles, flags, envBlock, dirp, &si.StartupInfo, pi)
+		err = CreateProcessAsUser(sys.Token, argv0p, argvp, sys.ProcessAttributes, sys.ThreadAttributes, !sys.NoInheritHandles, flags, createEnvBlock(attr.Env), dirp, si, pi)
 	} else {
-		err = CreateProcess(argv0p, argvp, sys.ProcessAttributes, sys.ThreadAttributes, willInheritHandles, flags, envBlock, dirp, &si.StartupInfo, pi)
+		err = CreateProcess(argv0p, argvp, sys.ProcessAttributes, sys.ThreadAttributes, !sys.NoInheritHandles, flags, createEnvBlock(attr.Env), dirp, si, pi)
 	}
 	if err != nil {
 		return 0, 0, err
 	}
 	defer CloseHandle(Handle(pi.Thread))
+
 	runtime.KeepAlive(fd)
 	runtime.KeepAlive(sys)
 

@@ -41,6 +41,7 @@ var (
 	modiphlpapi = syscall.NewLazyDLL(sysdll.Add("iphlpapi.dll"))
 	modkernel32 = syscall.NewLazyDLL(sysdll.Add("kernel32.dll"))
 	modnetapi32 = syscall.NewLazyDLL(sysdll.Add("netapi32.dll"))
+	modntdll    = syscall.NewLazyDLL(sysdll.Add("ntdll.dll"))
 	modpsapi    = syscall.NewLazyDLL(sysdll.Add("psapi.dll"))
 	moduserenv  = syscall.NewLazyDLL(sysdll.Add("userenv.dll"))
 	modws2_32   = syscall.NewLazyDLL(sysdll.Add("ws2_32.dll"))
@@ -76,6 +77,7 @@ var (
 	procNetShareAdd                  = modnetapi32.NewProc("NetShareAdd")
 	procNetShareDel                  = modnetapi32.NewProc("NetShareDel")
 	procNetUserGetLocalGroups        = modnetapi32.NewProc("NetUserGetLocalGroups")
+	procNtSetInformationFile         = modntdll.NewProc("NtSetInformationFile")
 	procGetProcessMemoryInfo         = modpsapi.NewProc("GetProcessMemoryInfo")
 	procCreateEnvironmentBlock       = moduserenv.NewProc("CreateEnvironmentBlock")
 	procDestroyEnvironmentBlock      = moduserenv.NewProc("DestroyEnvironmentBlock")
@@ -207,6 +209,8 @@ func GetCurrentThread() (pseudoHandle syscall.Handle, err error) {
 }
 
 func GetFileInformationByHandleEx(handle syscall.Handle, class uint32, info *byte, bufsize uint32) (err error) {
+	// Backport
+	return ERROR_INVALID_PARAMETER
 	r1, _, e1 := syscall.Syscall6(procGetFileInformationByHandleEx.Addr(), 4, uintptr(handle), uintptr(class), uintptr(unsafe.Pointer(info)), uintptr(bufsize), 0, 0)
 	if r1 == 0 {
 		err = errnoErr(e1)
@@ -293,7 +297,8 @@ func RtlVirtualUnwind(handlerType uint32, baseAddress uintptr, pc uintptr, entry
 	ret = uintptr(r0)
 	return
 }
-
+// Backport
+/*
 func SetFileInformationByHandle(handle syscall.Handle, fileInformationClass uint32, buf uintptr, bufsize uint32) (err error) {
 	r1, _, e1 := syscall.Syscall6(procSetFileInformationByHandle.Addr(), 4, uintptr(handle), uintptr(fileInformationClass), uintptr(buf), uintptr(bufsize), 0, 0)
 	if r1 == 0 {
@@ -301,6 +306,7 @@ func SetFileInformationByHandle(handle syscall.Handle, fileInformationClass uint
 	}
 	return
 }
+*/
 
 func UnlockFileEx(file syscall.Handle, reserved uint32, bytesLow uint32, bytesHigh uint32, overlapped *syscall.Overlapped) (err error) {
 	r1, _, e1 := syscall.Syscall6(procUnlockFileEx.Addr(), 5, uintptr(file), uintptr(reserved), uintptr(bytesLow), uintptr(bytesHigh), uintptr(unsafe.Pointer(overlapped)), 0)
@@ -339,6 +345,12 @@ func NetUserGetLocalGroups(serverName *uint16, userName *uint16, level uint32, f
 	if r0 != 0 {
 		neterr = syscall.Errno(r0)
 	}
+	return
+}
+
+func NtSetInformationFile(handle syscall.Handle, iosb *IO_STATUS_BLOCK, inBuffer *byte, inBufferLen uint32, class uint32) (ntstatus NTStatus) {
+	r0, _, _ := syscall.Syscall6(procNtSetInformationFile.Addr(), 5, uintptr(handle), uintptr(unsafe.Pointer(iosb)), uintptr(unsafe.Pointer(inBuffer)), uintptr(inBufferLen), uintptr(class), 0)
+	ntstatus = NTStatus(r0)
 	return
 }
 

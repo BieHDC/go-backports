@@ -147,7 +147,7 @@ const (
 )
 
 const (
-	PeMinimumTargetMajorVersion = 6
+	PeMinimumTargetMajorVersion = 5
 	PeMinimumTargetMinorVersion = 1
 )
 

@@ -355,6 +355,9 @@ func Link(oldname, newname string) error {
 // if oldname is later created as a directory the symlink will not work.
 // If there is an error, it will be of type *LinkError.
 func Symlink(oldname, newname string) error {
+	// Backport: XP cant symlink
+	return &LinkError{"symlink", oldname, newname, syscall.EWINDOWS}
+
 	// '/' does not work in link's content
 	oldname = fromSlash(oldname)
 
@@ -407,6 +410,9 @@ func Symlink(oldname, newname string) error {
 // parameter, so that Windows does not follow symlink, if path is a symlink.
 // openSymlink returns opened file handle.
 func openSymlink(path string) (syscall.Handle, error) {
+	// Backport: XP cant symlink
+	return 0, errors.New("openSymlink: symlinks not supported by this os")
+
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err

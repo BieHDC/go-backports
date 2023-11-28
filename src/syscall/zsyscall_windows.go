@@ -94,7 +94,6 @@ var (
 	procCreateSymbolicLinkW                = modkernel32.NewProc("CreateSymbolicLinkW")
 	procCreateToolhelp32Snapshot           = modkernel32.NewProc("CreateToolhelp32Snapshot")
 	procDeleteFileW                        = modkernel32.NewProc("DeleteFileW")
-	procDeleteProcThreadAttributeList      = modkernel32.NewProc("DeleteProcThreadAttributeList")
 	procDeviceIoControl                    = modkernel32.NewProc("DeviceIoControl")
 	procDuplicateHandle                    = modkernel32.NewProc("DuplicateHandle")
 	procExitProcess                        = modkernel32.NewProc("ExitProcess")
@@ -129,11 +128,11 @@ var (
 	procGetShortPathNameW                  = modkernel32.NewProc("GetShortPathNameW")
 	procGetStartupInfoW                    = modkernel32.NewProc("GetStartupInfoW")
 	procGetStdHandle                       = modkernel32.NewProc("GetStdHandle")
+	procGetSystemDirectoryW                = modkernel32.NewProc("GetSystemDirectoryW")
 	procGetSystemTimeAsFileTime            = modkernel32.NewProc("GetSystemTimeAsFileTime")
 	procGetTempPathW                       = modkernel32.NewProc("GetTempPathW")
 	procGetTimeZoneInformation             = modkernel32.NewProc("GetTimeZoneInformation")
 	procGetVersion                         = modkernel32.NewProc("GetVersion")
-	procInitializeProcThreadAttributeList  = modkernel32.NewProc("InitializeProcThreadAttributeList")
 	procLoadLibraryW                       = modkernel32.NewProc("LoadLibraryW")
 	procLocalFree                          = modkernel32.NewProc("LocalFree")
 	procMapViewOfFile                      = modkernel32.NewProc("MapViewOfFile")
@@ -574,11 +573,6 @@ func DeleteFile(path *uint16) (err error) {
 	return
 }
 
-func deleteProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST) {
-	Syscall(procDeleteProcThreadAttributeList.Addr(), 1, uintptr(unsafe.Pointer(attrlist)), 0, 0)
-	return
-}
-
 func DeviceIoControl(handle Handle, ioControlCode uint32, inBuffer *byte, inBufferSize uint32, outBuffer *byte, outBufferSize uint32, bytesReturned *uint32, overlapped *Overlapped) (err error) {
 	r1, _, e1 := Syscall9(procDeviceIoControl.Addr(), 8, uintptr(handle), uintptr(ioControlCode), uintptr(unsafe.Pointer(inBuffer)), uintptr(inBufferSize), uintptr(unsafe.Pointer(outBuffer)), uintptr(outBufferSize), uintptr(unsafe.Pointer(bytesReturned)), uintptr(unsafe.Pointer(overlapped)), 0)
 	if r1 == 0 {
@@ -916,14 +910,6 @@ func GetVersion() (ver uint32, err error) {
 	return
 }
 
-func initializeProcThreadAttributeList(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, attrcount uint32, flags uint32, size *uintptr) (err error) {
-	r1, _, e1 := Syscall6(procInitializeProcThreadAttributeList.Addr(), 4, uintptr(unsafe.Pointer(attrlist)), uintptr(attrcount), uintptr(flags), uintptr(unsafe.Pointer(size)), 0, 0)
-	if r1 == 0 {
-		err = errnoErr(e1)
-	}
-	return
-}
-
 func LoadLibrary(libname string) (handle Handle, err error) {
 	var _p0 *uint16
 	_p0, err = UTF16PtrFromString(libname)
@@ -1120,14 +1106,6 @@ func TerminateProcess(handle Handle, exitcode uint32) (err error) {
 
 func UnmapViewOfFile(addr uintptr) (err error) {
 	r1, _, e1 := Syscall(procUnmapViewOfFile.Addr(), 1, uintptr(addr), 0, 0)
-	if r1 == 0 {
-		err = errnoErr(e1)
-	}
-	return
-}
-
-func updateProcThreadAttribute(attrlist *_PROC_THREAD_ATTRIBUTE_LIST, flags uint32, attr uintptr, value unsafe.Pointer, size uintptr, prevvalue unsafe.Pointer, returnedsize *uintptr) (err error) {
-	r1, _, e1 := Syscall9(procUpdateProcThreadAttribute.Addr(), 7, uintptr(unsafe.Pointer(attrlist)), uintptr(flags), uintptr(attr), uintptr(value), uintptr(size), uintptr(prevvalue), uintptr(unsafe.Pointer(returnedsize)), 0, 0)
 	if r1 == 0 {
 		err = errnoErr(e1)
 	}

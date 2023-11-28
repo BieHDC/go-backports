@@ -23,17 +23,14 @@ const (
 //go:cgo_import_dynamic runtime._CreateIoCompletionPort CreateIoCompletionPort%4 "kernel32.dll"
 //go:cgo_import_dynamic runtime._CreateThread CreateThread%6 "kernel32.dll"
 //go:cgo_import_dynamic runtime._CreateWaitableTimerA CreateWaitableTimerA%3 "kernel32.dll"
-//go:cgo_import_dynamic runtime._CreateWaitableTimerExW CreateWaitableTimerExW%4 "kernel32.dll"
 //go:cgo_import_dynamic runtime._DuplicateHandle DuplicateHandle%7 "kernel32.dll"
 //go:cgo_import_dynamic runtime._ExitProcess ExitProcess%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._FreeEnvironmentStringsW FreeEnvironmentStringsW%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetConsoleMode GetConsoleMode%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetCurrentThreadId GetCurrentThreadId%0 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetEnvironmentStringsW GetEnvironmentStringsW%0 "kernel32.dll"
-//go:cgo_import_dynamic runtime._GetErrorMode GetErrorMode%0 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetProcAddress GetProcAddress%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetProcessAffinityMask GetProcessAffinityMask%3 "kernel32.dll"
-//go:cgo_import_dynamic runtime._GetQueuedCompletionStatusEx GetQueuedCompletionStatusEx%6 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetStdHandle GetStdHandle%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetSystemDirectoryA GetSystemDirectoryA%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._GetSystemInfo GetSystemInfo%1 "kernel32.dll"
@@ -42,7 +39,6 @@ const (
 //go:cgo_import_dynamic runtime._LoadLibraryW LoadLibraryW%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._LoadLibraryA LoadLibraryA%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._PostQueuedCompletionStatus PostQueuedCompletionStatus%4 "kernel32.dll"
-//go:cgo_import_dynamic runtime._RaiseFailFastException RaiseFailFastException%3 "kernel32.dll"
 //go:cgo_import_dynamic runtime._ResumeThread ResumeThread%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._SetConsoleCtrlHandler SetConsoleCtrlHandler%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._SetErrorMode SetErrorMode%1 "kernel32.dll"
@@ -59,10 +55,9 @@ const (
 //go:cgo_import_dynamic runtime._VirtualQuery VirtualQuery%3 "kernel32.dll"
 //go:cgo_import_dynamic runtime._WaitForSingleObject WaitForSingleObject%2 "kernel32.dll"
 //go:cgo_import_dynamic runtime._WaitForMultipleObjects WaitForMultipleObjects%4 "kernel32.dll"
-//go:cgo_import_dynamic runtime._WerGetFlags WerGetFlags%2 "kernel32.dll"
-//go:cgo_import_dynamic runtime._WerSetFlags WerSetFlags%1 "kernel32.dll"
 //go:cgo_import_dynamic runtime._WriteConsoleW WriteConsoleW%5 "kernel32.dll"
 //go:cgo_import_dynamic runtime._WriteFile WriteFile%5 "kernel32.dll"
+//go:cgo_import_dynamic runtime._GetQueuedCompletionStatus GetQueuedCompletionStatus%5 "kernel32.dll"
 
 type stdFunction unsafe.Pointer
 
@@ -77,17 +72,15 @@ var (
 	_CreateIoCompletionPort,
 	_CreateThread,
 	_CreateWaitableTimerA,
-	_CreateWaitableTimerExW,
 	_DuplicateHandle,
 	_ExitProcess,
 	_FreeEnvironmentStringsW,
 	_GetConsoleMode,
 	_GetCurrentThreadId,
 	_GetEnvironmentStringsW,
-	_GetErrorMode,
 	_GetProcAddress,
 	_GetProcessAffinityMask,
-	_GetQueuedCompletionStatusEx,
+	_GetQueuedCompletionStatus, // Backport: readded for fallback
 	_GetStdHandle,
 	_GetSystemDirectoryA,
 	_GetSystemInfo,
@@ -99,7 +92,6 @@ var (
 	_PostQueuedCompletionStatus,
 	_QueryPerformanceCounter,
 	_QueryPerformanceFrequency,
-	_RaiseFailFastException,
 	_ResumeThread,
 	_SetConsoleCtrlHandler,
 	_SetErrorMode,
@@ -116,8 +108,6 @@ var (
 	_VirtualQuery,
 	_WaitForSingleObject,
 	_WaitForMultipleObjects,
-	_WerGetFlags,
-	_WerSetFlags,
 	_WriteConsoleW,
 	_WriteFile,
 	_ stdFunction
@@ -450,6 +440,8 @@ var haveHighResTimer = false
 // resolution timer. createHighResTimer returns new timer
 // handle or 0, if CreateWaitableTimerEx failed.
 func createHighResTimer() uintptr {
+	return uintptr(0) // Backport: we just dont have it and it cleanly falls back
+	/*
 	const (
 		// As per @jstarks, see
 		// https://github.com/golang/go/issues/8687#issuecomment-656259353
@@ -462,6 +454,7 @@ func createHighResTimer() uintptr {
 	return stdcall4(_CreateWaitableTimerExW, 0, 0,
 		_CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
 		_SYNCHRONIZE|_TIMER_QUERY_STATE|_TIMER_MODIFY_STATE)
+	*/
 }
 
 func initHighResTimer() {
@@ -490,6 +483,9 @@ var longFileName [(_MAX_PATH+1)*2 + 1]byte
 // canUseLongPaths is set to true, and later when called, os.fixLongPath
 // returns early without doing work.
 func initLongPathSupport() {
+	// Backport: we dont have long paths
+	return
+
 	const (
 		IsLongPathAwareProcess = 0x80
 		PebBitFieldOffset      = 3
